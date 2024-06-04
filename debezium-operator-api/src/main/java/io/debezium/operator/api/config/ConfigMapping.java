@@ -22,7 +22,31 @@ import java.util.stream.Stream;
  */
 public final class ConfigMapping {
 
-    private final Map<String, String> config;
+    public enum KeyType {
+        RELATIVE,
+        ABSOLUTE;
+    }
+
+    public record Key(String name, KeyType type) {
+        public static Key rel(String key) {
+            return new Key(key, KeyType.RELATIVE);
+        }
+
+        public static Key abs(String key) {
+            return new Key(key, KeyType.ABSOLUTE);
+        }
+
+        public static Key root() {
+            return new Key(null, null);
+        }
+
+        @Override
+        public String toString() {
+            return name;
+        }
+    }
+
+    private final Map<Key, String> config;
     private final String prefix;
 
     public static ConfigMapping from(Map<String, ?> properties) {
@@ -44,7 +68,13 @@ public final class ConfigMapping {
         this.prefix = prefix;
     }
 
-    public Map<String, String> getAsMap() {
+    public Map<String, String> getAsMapSimple() {
+        return config.entrySet()
+                .stream()
+                .collect(Collectors.toMap(e -> e.getKey().name(), Map.Entry::getValue));
+    }
+
+    public Map<Key, String> getAsMap() {
         return config;
     }
 
@@ -56,12 +86,17 @@ public final class ConfigMapping {
     }
 
     public ConfigMapping rootValue(Object value) {
-        putInternal(value);
+        putInternal(value, Key.root());
         return this;
     }
 
     public ConfigMapping put(String key, Object value) {
-        putInternal(value, key);
+        putInternal(value, Key.rel(key));
+        return this;
+    }
+
+    public ConfigMapping putAbs(String key, Object value) {
+        putInternal(value, Key.abs(key));
         return this;
     }
 
@@ -86,7 +121,7 @@ public final class ConfigMapping {
     }
 
     public ConfigMapping putAll(Map<String, ?> props) {
-        props.forEach((key, value) -> putInternal(value, key));
+        props.forEach((key, value) -> putInternal(value, Key.rel(key)));
         return this;
     }
 
@@ -122,19 +157,46 @@ public final class ConfigMapping {
         return this;
     }
 
-    private void putInternal(Object value, String... keys) {
+    private void putInternal(Object value, Key key) {
         if (value == null) {
             return;
         }
-        var key = prefix(keys);
-        config.put(key, String.valueOf(value));
+        var combined = prefix(null, key);
+        config.put(combined, String.valueOf(value));
     }
 
-    private String prefix(String... keys) {
-        return Stream.concat(Stream.of(prefix), Stream.of(keys))
+    private void putInternal(Object value, String key, Key subKey) {
+        if (value == null) {
+            return;
+        }
+        var combined = prefix(key, subKey);
+        config.put(combined, String.valueOf(value));
+    }
+
+    private Key prefix(Key key) {
+        if (key.type == KeyType.ABSOLUTE) {
+            return key;
+        }
+
+        var combined = Stream.of(prefix, key.name)
                 .filter(Objects::nonNull)
                 .filter(not(String::isBlank))
                 .collect(Collectors.joining("."));
+
+        return Key.rel(combined);
+    }
+
+    private Key prefix(String key, Key subKey) {
+        if (subKey.type == KeyType.ABSOLUTE) {
+            return subKey;
+        }
+
+        var combined = Stream.concat(Stream.of(prefix), Stream.of(key, subKey.name))
+                .filter(Objects::nonNull)
+                .filter(not(String::isBlank))
+                .collect(Collectors.joining("."));
+
+        return Key.rel(combined);
     }
 
     public String md5Sum() {
